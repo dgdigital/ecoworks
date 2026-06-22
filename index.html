@@ -90,38 +90,6 @@
     background: var(--accent); color: var(--bg); font-weight: 600;
   }
 
-  /* Lighting Preset Selector — nur im 3D-Modus */
-  #light-presets {
-    position: absolute; top: 70px; right: 20px; z-index: 10;
-    display: none; /* nur sichtbar im 3D-Modus */
-    flex-direction: column; gap: 4px;
-    background: rgba(0, 46, 54, 0.7);
-    backdrop-filter: blur(8px);
-    border: 1px solid rgba(128, 150, 154, 0.3);
-    border-radius: 12px; padding: 8px;
-    min-width: 140px;
-  }
-  #light-presets.visible { display: flex; }
-  #light-presets .label {
-    color: var(--text-secondary);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 4px 8px 2px;
-  }
-  #light-presets button {
-    background: transparent; color: var(--text);
-    border: none; padding: 6px 12px;
-    font-size: 12px; text-align: left;
-    border-radius: 6px; cursor: pointer;
-    transition: background 100ms;
-  }
-  #light-presets button:hover { background: rgba(255,255,255,0.08); }
-  #light-presets button.active {
-    background: var(--accent); color: var(--bg); font-weight: 600;
-  }
-
   .hint { color: var(--text-secondary); font-size: 13px; margin-left: auto; }
 
   @media (max-width: 800px) {
@@ -144,13 +112,6 @@
     <div id="look-toggle">
       <button id="look-iso" class="active">Isometrisch</button>
       <button id="look-real">3D-Look</button>
-    </div>
-    <div id="light-presets">
-      <span class="label">Beleuchtung</span>
-      <button data-preset="subtle">Subtle</button>
-      <button data-preset="bright-flat" class="active">Bright Flat</button>
-      <button data-preset="dramatic">Dramatic</button>
-      <button data-preset="studio">Studio</button>
     </div>
   </div>
   <div id="controls">
@@ -210,7 +171,7 @@ const C = {
   l2:         0x4d787a,
   // Layer 3
   l3_fill:    0xdeecdf,
-  l3_frame:   0xadc4c6,
+  l3_frame:   0x3e797b,  // dunkles türkis-grün wie im SVG (cls-9)
   // Layer 4
   l4:         0x64989a,
   // Layer 5
@@ -223,29 +184,117 @@ const C = {
   l6_lamelle: 0x4d787a
 };
 
-const LAYER_W = 5.5;
-const LAYER_H = 2.0;
+// Wand-Maße in Meter (1 Three.js-Einheit = 1 Meter)
+const LAYER_W = 6.9;
+const LAYER_H = 2.7;
+// Layer-Dicken in mm (umgerechnet zu Metern für Three.js)
 const LAYER_DEFS = [
-  { thickness: 0.18, builder: 'mineralwolle' },
-  { thickness: 0.08, builder: 'beplankung' },
-  { thickness: 0.45, builder: 'holzrahmen' },
-  { thickness: 0.02, builder: 'membran' },
-  { thickness: 0.16, builder: 'hinterlueftung' },
-  { thickness: 0.12, builder: 'bekleidung' }
+  { thickness: 0.098,  builder: 'mineralwolle' },   // Ausgleichsdämmung 98mm
+  { thickness: 0.0125, builder: 'beplankung' },     // Beplankung 12.5mm
+  { thickness: 0.160,  builder: 'holzrahmen' },     // Holzrahmen 160mm
+  { thickness: 0.0005, builder: 'membran' },        // Fassadenbahn 0.5mm
+  { thickness: 0.040,  builder: 'hinterlueftung' }, // Hinterlüftung 40mm
+  { thickness: 0.022,  builder: 'bekleidung' }      // Bekleidung 22mm
 ];
 
 const COLLAPSED_GAP = 0;
-const EXPANDED_GAP  = 1.3;
+const EXPANDED_GAP  = 1.1;
 
 // ============================================================
 //  LOOK MODE - bestimmt Material-Typ
 // ============================================================
 let lookMode = 'iso';
 
+// ============================================================
+//  GLOBALE FENSTER-DEFINITION
+//  Das Fenster geht durch ALLE Schichten 1-6 durch.
+//  Die echten Maße: 94cm × 114cm, Position rechts unter der Mitte.
+// ============================================================
+const WIN = {
+  W: 0.94,
+  H: 1.14,
+  X: 1.97,   // Mitte zwischen Ständer 5 (1.48) und Ständer 6 (2.45)
+  Y: -0.1
+};
+const WIN_LEFT  = WIN.X - WIN.W/2;
+const WIN_RIGHT = WIN.X + WIN.W/2;
+const WIN_TOP   = WIN.Y + WIN.H/2;
+const WIN_BOT   = WIN.Y - WIN.H/2;
+
+// Lüfter-Position (rechts vom Fenster, oben)
+const VENT = {
+  W: 0.42, H: 0.28,
+  X: WIN.X + WIN.W/2 + 0.6,
+  Y: WIN.Y + WIN.H/2 - 0.12
+};
+const VENT_LEFT  = VENT.X - VENT.W/2;
+const VENT_RIGHT = VENT.X + VENT.W/2;
+const VENT_TOP   = VENT.Y + VENT.H/2;
+const VENT_BOT   = VENT.Y - VENT.H/2;
+
+// Baut eine Wand-Schicht als EINZELNES Mesh mit Fenster- und Lüfter-Aussparungen.
+// Optional kann die Wand und/oder die Löcher um einen Inset verkleinert/vergrößert werden,
+// um Z-Fighting mit anderen Elementen zu vermeiden.
+function makeWallWithHoles(thickness, color, opts = {}) {
+  const insetX = opts.insetX || 0;
+  const insetY = opts.insetY || 0;
+  const winInset = opts.winInset || 0;
+  const ventInset = opts.ventInset || 0;
+
+  // Wand-Outline (Shape) - eventuell verkleinert
+  const shape = new THREE.Shape();
+  shape.moveTo(-LAYER_W/2 + insetX, -LAYER_H/2 + insetY);
+  shape.lineTo( LAYER_W/2 - insetX, -LAYER_H/2 + insetY);
+  shape.lineTo( LAYER_W/2 - insetX,  LAYER_H/2 - insetY);
+  shape.lineTo(-LAYER_W/2 + insetX,  LAYER_H/2 - insetY);
+  shape.lineTo(-LAYER_W/2 + insetX, -LAYER_H/2 + insetY);
+
+  // Fenster-Loch - eventuell etwas größer (winInset)
+  const winHole = new THREE.Path();
+  winHole.moveTo(WIN_LEFT - winInset,  WIN_BOT - winInset);
+  winHole.lineTo(WIN_RIGHT + winInset, WIN_BOT - winInset);
+  winHole.lineTo(WIN_RIGHT + winInset, WIN_TOP + winInset);
+  winHole.lineTo(WIN_LEFT - winInset,  WIN_TOP + winInset);
+  winHole.lineTo(WIN_LEFT - winInset,  WIN_BOT - winInset);
+  shape.holes.push(winHole);
+
+  // Lüfter-Loch - eventuell etwas größer (ventInset)
+  const ventHole = new THREE.Path();
+  ventHole.moveTo(VENT_LEFT - ventInset,  VENT_BOT - ventInset);
+  ventHole.lineTo(VENT_RIGHT + ventInset, VENT_BOT - ventInset);
+  ventHole.lineTo(VENT_RIGHT + ventInset, VENT_TOP + ventInset);
+  ventHole.lineTo(VENT_LEFT - ventInset,  VENT_TOP + ventInset);
+  ventHole.lineTo(VENT_LEFT - ventInset,  VENT_BOT - ventInset);
+  shape.holes.push(ventHole);
+
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: thickness,
+    bevelEnabled: false,
+    curveSegments: 1
+  });
+  geo.translate(0, 0, -thickness/2);
+
+  const material = mat(color, opts);
+  const mesh = new THREE.Mesh(geo, material);
+
+  // Nur Außenkanten + Lochkanten zeigen
+  const edgeOpts = lookMode === 'iso'
+    ? { color: C.edge, opacity: 1 }
+    : { color: 0x000000, opacity: 0.18, transparent: true };
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo, 30),
+    new THREE.LineBasicMaterial(edgeOpts)
+  );
+  mesh.add(edges);
+
+  return mesh;
+}
+
 function mat(color, opts = {}) {
   if (lookMode === 'iso') {
     return new THREE.MeshBasicMaterial({
       color,
+      map: opts.map || null,  // Textur auch im iso-Modus
       transparent: opts.opacity != null && opts.opacity < 1,
       opacity: opts.opacity ?? 1
     });
@@ -259,6 +308,102 @@ function mat(color, opts = {}) {
       map: opts.map || null
     });
   }
+}
+
+// Prozedurale Mineralwolle-Textur: kleine kantige Splitter wie im SVG
+let cachedMineralTexture = null;
+function getMineralTexture() {
+  if (cachedMineralTexture) return cachedMineralTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024; canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  // Heller Mineralwolle-Grundton
+  ctx.fillStyle = '#d9eddf';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  let seed = 7;
+  function rnd() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+
+  // Kleine kantige 4-5-Eck Splitter (Faser-Optik)
+  function drawSplinter(cx, cy, size, fillStyle) {
+    const numPoints = 4 + Math.floor(rnd() * 2);
+    const pts = [];
+    for (let i = 0; i < numPoints; i++) {
+      const angle = (i / numPoints) * Math.PI * 2 + rnd() * 0.4;
+      const r = size * (0.5 + rnd() * 0.8);
+      pts.push([cx + Math.cos(angle) * r, cy + Math.sin(angle) * r]);
+    }
+    ctx.fillStyle = fillStyle;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Weniger Splitter für ein ruhigeres, weniger füllendes Muster
+  for (let i = 0; i < 140; i++) {
+    drawSplinter(rnd()*canvas.width, rnd()*canvas.height, 7 + rnd()*9, '#8fb0b3');
+  }
+  // Vereinzelte hellere Akzent-Splitter
+  for (let i = 0; i < 40; i++) {
+    drawSplinter(rnd()*canvas.width, rnd()*canvas.height, 5 + rnd()*6, '#c4dad4');
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1.2, 0.5);
+  if (THREE.SRGBColorSpace !== undefined) tex.colorSpace = THREE.SRGBColorSpace;
+  cachedMineralTexture = tex;
+  return tex;
+}
+
+// Prozedurale Gipsfaser-Textur: dunklere Splitter auf türkis
+let cachedGipsTexture = null;
+function getGipsTexture() {
+  if (cachedGipsTexture) return cachedGipsTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024; canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#4d787a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  let seed = 13;
+  function rnd() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+
+  function drawSplinter(cx, cy, size, fillStyle) {
+    const numPoints = 4 + Math.floor(rnd() * 2);
+    const pts = [];
+    for (let i = 0; i < numPoints; i++) {
+      const angle = (i / numPoints) * Math.PI * 2 + rnd() * 0.4;
+      const r = size * (0.5 + rnd() * 0.8);
+      pts.push([cx + Math.cos(angle) * r, cy + Math.sin(angle) * r]);
+    }
+    ctx.fillStyle = fillStyle;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Weniger Splitter für ruhigeres Muster
+  for (let i = 0; i < 140; i++) {
+    drawSplinter(rnd()*canvas.width, rnd()*canvas.height, 7 + rnd()*9, '#1e4548');
+  }
+  // Vereinzelte hellere Akzent-Splitter
+  for (let i = 0; i < 40; i++) {
+    drawSplinter(rnd()*canvas.width, rnd()*canvas.height, 5 + rnd()*6, '#7ba2a4');
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1.2, 0.5);
+  if (THREE.SRGBColorSpace !== undefined) tex.colorSpace = THREE.SRGBColorSpace;
+  cachedGipsTexture = tex;
+  return tex;
 }
 
 // Prozedurale Holz-Textur (UV Plus-artiges warmes Naturholz)
@@ -362,61 +507,80 @@ function makeBox(w, h, d, color, opts = {}) {
 // ============================================================
 
 function buildMineralwolle(thickness) {
-  return makeBox(LAYER_W, LAYER_H, thickness, C.l1);
+  return makeWallWithHoles(thickness, 0xffffff, { map: getMineralTexture(), roughness: 0.9 });
 }
 
 function buildBeplankung(thickness) {
-  return makeBox(LAYER_W, LAYER_H, thickness, C.l2);
+  return makeWallWithHoles(thickness, 0xffffff, { map: getGipsTexture(), roughness: 0.8 });
 }
 
 function buildHolzrahmen(thickness) {
   const g = new THREE.Group();
-  // Mineralwolle-Füllung (etwas kleiner als Gesamtbox)
-  const fill = makeBox(LAYER_W * 0.98, LAYER_H * 0.98, thickness * 0.92, C.l3_fill);
-  g.add(fill);
+  // Mineralwolle-Füllung sitzt INNERHALB des Holzrahmens, mit Insets damit
+  // sie nicht am Außenrahmen, Sturz oder Brüstung koplanar anschlägt (kein Z-Fighting)
+  g.add(makeWallWithHoles(thickness * 0.6, 0xffffff, {
+    map: getMineralTexture(),
+    roughness: 0.9,
+    insetX: 0.07,     // 7cm vom Außenrand zurück (sitzt innerhalb der Außenpfosten)
+    insetY: 0.13,     // 13cm vom Außenrand zurück (sitzt zwischen Schwelle und Rähm)
+    winInset: 0.015,  // 1.5cm Loch-Erweiterung (Sturz/Brüstung ragen ins Loch)
+    ventInset: 0.015
+  }));
 
-  // Holzrahmen: außen umlaufender Rahmen + 3 Ständer mittig
-  const frameThick = 0.10;
-  // Oben
-  const top = makeBox(LAYER_W, frameThick, thickness * 1.0, C.l3_frame);
-  top.position.y = LAYER_H/2 - frameThick/2;
+  // Holzrahmen: Schwelle/Rähm + Ständer
+  const frameThick = 0.06;  // 60mm Pfosten-Dicke
+  const beamH = 0.12;       // 120mm Schwelle/Rähm
+  const sturzH = 0.07;      // 70mm dünner Sturz/Brüstung am Fenster
+
+  // Oben (Rähm) - durchgehend
+  const top = makeBox(LAYER_W, beamH, thickness * 1.0, C.l3_frame);
+  top.position.y = LAYER_H/2 - beamH/2;
   g.add(top);
-  // Unten
-  const bot = makeBox(LAYER_W, frameThick, thickness * 1.0, C.l3_frame);
-  bot.position.y = -LAYER_H/2 + frameThick/2;
+  // Unten (Schwelle) - durchgehend
+  const bot = makeBox(LAYER_W, beamH, thickness * 1.0, C.l3_frame);
+  bot.position.y = -LAYER_H/2 + beamH/2;
   g.add(bot);
-  // Links
-  const left = makeBox(frameThick, LAYER_H, thickness * 1.0, C.l3_frame);
-  left.position.x = -LAYER_W/2 + frameThick/2;
-  g.add(left);
-  // Rechts
-  const right = makeBox(frameThick, LAYER_H, thickness * 1.0, C.l3_frame);
-  right.position.x = LAYER_W/2 - frameThick/2;
-  g.add(right);
-  // 3 vertikale Ständer
-  for (let i = 1; i <= 3; i++) {
-    const stud = makeBox(frameThick, LAYER_H - frameThick*2, thickness * 1.0, C.l3_frame);
-    stud.position.x = -LAYER_W/2 + (LAYER_W / 4) * i;
+
+  // 6 Innen-Ständer aus SVG (Ständer 5 + 6 sind direkt am Fenster)
+  const studXs = [-2.42, -1.45, -0.47, 0.50, 1.48, 2.45];
+  for (const x of studXs) {
+    const stud = makeBox(frameThick, LAYER_H - beamH*2, thickness * 1.0, C.l3_frame);
+    stud.position.set(x, 0, 0);
     g.add(stud);
   }
+  // 2 Außen-Pfosten (Rahmen links + rechts)
+  const leftPost = makeBox(frameThick, LAYER_H - beamH*2, thickness * 1.0, C.l3_frame);
+  leftPost.position.set(-LAYER_W/2 + frameThick/2, 0, 0);
+  g.add(leftPost);
+  const rightPost = makeBox(frameThick, LAYER_H - beamH*2, thickness * 1.0, C.l3_frame);
+  rightPost.position.set(LAYER_W/2 - frameThick/2, 0, 0);
+  g.add(rightPost);
+
+  // Sturz oberhalb des Fensters (dünner Querbalken zwischen Ständer 5 und 6)
+  const sturzTop = makeBox(WIN.W, sturzH, thickness * 1.0, C.l3_frame);
+  sturzTop.position.set(WIN.X, WIN_TOP + sturzH/2, 0);
+  g.add(sturzTop);
+
+  // Brüstung unterhalb des Fensters
+  const brust = makeBox(WIN.W, sturzH, thickness * 1.0, C.l3_frame);
+  brust.position.set(WIN.X, WIN_BOT - sturzH/2, 0);
+  g.add(brust);
+
   return g;
 }
 
 function buildMembran(thickness) {
-  // Membran: dünn, im 3D-Modus leicht transparent
-  const opacity = lookMode === 'real' ? 0.85 : 1.0;
-  return makeBox(LAYER_W, LAYER_H, thickness, C.l4, { opacity });
+  return makeWallWithHoles(thickness, C.l4, { roughness: 0.85 });
 }
 
 function buildHinterlueftung(thickness) {
   const g = new THREE.Group();
-  // Vertikale Latten
-  const lathCount = 6;
-  const lathW = 0.10;
-  for (let i = 0; i < lathCount; i++) {
-    const tFrac = i / (lathCount - 1);
-    const x = -LAYER_W/2 + 0.15 + tFrac * (LAYER_W - 0.3);
-    const lath = makeBox(lathW, LAYER_H * 0.95, thickness, C.l5);
+  // Konterlattung: 6 Latten an EXAKT den gleichen Positionen wie die Holzständer in Layer 3
+  // Die Latten sitzen über den Ständern (so werden sie befestigt)
+  const lathW = 0.06;
+  const lathXs = [-2.42, -1.45, -0.47, 0.50, 1.48, 2.45];
+  for (const x of lathXs) {
+    const lath = makeBox(lathW, LAYER_H * 0.96, thickness, C.l5);
     lath.position.set(x, 0, 0);
     g.add(lath);
   }
@@ -426,19 +590,21 @@ function buildHinterlueftung(thickness) {
 function buildBekleidung(thickness) {
   const g = new THREE.Group();
 
-  // Fenster-Geometrie
-  const winW = 1.0, winH = 1.1;
-  const winX = 1.3, winY = -0.05;
-  const winLeft = winX - winW/2, winRight = winX + winW/2;
-  const winTop = winY + winH/2, winBot = winY - winH/2;
+  const winW = WIN.W, winH = WIN.H;
+  const winX = WIN.X, winY = WIN.Y;
+  const winLeft = WIN_LEFT, winRight = WIN_RIGHT;
+  const winTop = WIN_TOP, winBot = WIN_BOT;
 
-  // Material für Lamellen: im 3D-Modus mit Holz-Textur, im iso-Modus mit Brand-Grün
+  const ventW = VENT.W, ventH = VENT.H;
+  const ventX = VENT.X, ventY = VENT.Y;
+
+  // Material-Wahl: 3D-Modus mit Holz-Textur, iso mit Brand-Grün
   let claddingColor, claddingMap;
   if (lookMode === 'real') {
-    claddingColor = 0xffffff; // weiß, damit die Textur ihre echten Farben zeigt
+    claddingColor = 0xffffff;
     claddingMap = getWoodTexture();
   } else {
-    claddingColor = C.l6_main; // Brand-Grün im iso-Modus
+    claddingColor = C.l6_main;
     claddingMap = null;
   }
 
@@ -447,10 +613,12 @@ function buildBekleidung(thickness) {
     const material = mat(claddingColor, { map: claddingMap, roughness: 0.85, metalness: 0 });
     const mesh = new THREE.Mesh(geo, material);
     mesh.position.copy(pos);
-    // Edges
+    // Stulpschalung: Latte leicht kippen, Oberkante nach hinten
+    // Das gibt im iso-Modus den charakteristisch angewinkelten Look
+    mesh.rotation.x = -0.18; // ~10° Neigung, Top kippt nach hinten / Bottom nach vorne (Stulpschalung)
     const edgeOpts = lookMode === 'iso'
       ? { color: C.edge, opacity: 1 }
-      : { color: 0x000000, opacity: 0.15, transparent: true };
+      : { color: 0x000000, opacity: 0.18, transparent: true };
     const edges = new THREE.LineSegments(
       new THREE.EdgesGeometry(geo),
       new THREE.LineBasicMaterial(edgeOpts)
@@ -459,71 +627,105 @@ function buildBekleidung(thickness) {
     return mesh;
   }
 
-  // Holzlamellen-Look: horizontale Streifen, mit Fenster-Aussparung
-  const stripeCount = 12;
+  // === HOLZLAMELLEN (horizontal verlegt mit Fenster + Lüfter Aussparung) ===
+  const stripeCount = 18;
   const stripeH = LAYER_H / stripeCount;
   for (let i = 0; i < stripeCount; i++) {
     const sY = -LAYER_H/2 + stripeH/2 + i * stripeH;
     const sTop = sY + stripeH/2, sBot = sY - stripeH/2;
     const cutByWindow = sTop > winBot && sBot < winTop;
-    if (!cutByWindow) {
-      g.add(makeCladdingBox(LAYER_W, stripeH * 0.96, thickness, new THREE.Vector3(0, sY, 0)));
+    const cutByVent = sTop > VENT_BOT && sBot < VENT_TOP;
+
+    if (!cutByWindow && !cutByVent) {
+      // Volle Lamelle ohne Aussparung
+      g.add(makeCladdingBox(LAYER_W, stripeH * 0.97, thickness, new THREE.Vector3(0, sY, 0)));
     } else {
-      const leftW = winLeft - (-LAYER_W/2);
-      if (leftW > 0.02) {
-        g.add(makeCladdingBox(leftW, stripeH * 0.96, thickness, new THREE.Vector3(-LAYER_W/2 + leftW/2, sY, 0)));
+      // Zerlege Lamelle in Segmente um die Aussparungen herum
+      // Bestimme alle x-Bereiche die "gesetzt" sind
+      const segments = [];
+      let currentLeft = -LAYER_W/2;
+
+      // Stelle Liste der Aussparungen in dieser Zeile zusammen
+      const cuts = [];
+      if (cutByWindow) cuts.push({ left: winLeft, right: winRight });
+      if (cutByVent)   cuts.push({ left: VENT_LEFT, right: VENT_RIGHT });
+      cuts.sort((a, b) => a.left - b.left);
+
+      for (const cut of cuts) {
+        if (cut.left > currentLeft + 0.02) {
+          segments.push({ left: currentLeft, right: cut.left });
+        }
+        currentLeft = Math.max(currentLeft, cut.right);
       }
-      const rightW = LAYER_W/2 - winRight;
-      if (rightW > 0.02) {
-        g.add(makeCladdingBox(rightW, stripeH * 0.96, thickness, new THREE.Vector3(LAYER_W/2 - rightW/2, sY, 0)));
+      if (currentLeft < LAYER_W/2 - 0.02) {
+        segments.push({ left: currentLeft, right: LAYER_W/2 });
+      }
+
+      for (const seg of segments) {
+        const w = seg.right - seg.left;
+        const cx = (seg.left + seg.right) / 2;
+        g.add(makeCladdingBox(w, stripeH * 0.97, thickness, new THREE.Vector3(cx, sY, 0)));
       }
     }
   }
 
-  // Fensterleibung (4 dunkle Bänder um das Fenster)
-  const lt = 0.05;
-  const lTop = makeBox(winW + lt*2, lt, thickness * 0.95, C.l6_dark);
-  lTop.position.set(winX, winTop + lt/2, -0.005);
+  // === FENSTERLEIBUNG (4 dunkle Wände, ragen in die Tiefe) ===
+  const lt = 0.025; // Leibungs-Dicke
+  const leibungDepth = thickness * 1.5; // ragt etwas in die Tiefe
+  // Oben
+  const lTop = makeBox(winW + lt*2, lt, leibungDepth, C.l6_dark);
+  lTop.position.set(winX, winTop + lt/2, -thickness * 0.2);
   g.add(lTop);
-  const lBot = makeBox(winW + lt*2, lt * 1.4, thickness * 0.95, C.l6_dark);
-  lBot.position.set(winX, winBot - lt*0.7, -0.005);
+  // Unten (Fensterbank, etwas dicker, ragt nach außen vor)
+  const lBot = makeBox(winW + lt*4, lt * 1.8, leibungDepth, C.l6_dark);
+  lBot.position.set(winX, winBot - lt*0.9, -thickness * 0.2);
   g.add(lBot);
-  const lLeft = makeBox(lt, winH, thickness * 0.95, C.l6_dark);
-  lLeft.position.set(winLeft - lt/2, winY, -0.005);
+  // Links
+  const lLeft = makeBox(lt, winH, leibungDepth, C.l6_dark);
+  lLeft.position.set(winLeft - lt/2, winY, -thickness * 0.2);
   g.add(lLeft);
-  const lRight = makeBox(lt, winH, thickness * 0.95, C.l6_dark);
-  lRight.position.set(winRight + lt/2, winY, -0.005);
+  // Rechts
+  const lRight = makeBox(lt, winH, leibungDepth, C.l6_dark);
+  lRight.position.set(winRight + lt/2, winY, -thickness * 0.2);
   g.add(lRight);
 
-  // Rollladen oben (4 Streifen)
-  const rH = winH * 0.32;
+  // === ROLLLADEN (oben im Fenster, 4 dunkle horizontale Streifen) ===
+  const rH = winH * 0.30;
   const rY = winY + winH/2 - rH/2;
   for (let i = 0; i < 4; i++) {
     const sh = rH / 4;
     const sy = rY + rH/2 - sh/2 - i * sh;
-    const stripe = makeBox(winW * 0.92, sh * 0.85, thickness * 0.35, C.l6_rolladen);
-    stripe.position.set(winX, sy, thickness * 0.1);
+    const stripe = makeBox(winW * 0.92, sh * 0.88, thickness * 0.45, C.l6_rolladen);
+    stripe.position.set(winX, sy, thickness * 0.05);
     g.add(stripe);
   }
 
-  // Fensterscheibe (unter Rollladen)
-  const glassOpacity = lookMode === 'real' ? 0.55 : 1.0;
-  const glass = makeBox(winW * 0.92, winH * 0.6, thickness * 0.3, C.l6_glass, {
-    opacity: glassOpacity, roughness: 0.1, metalness: 0.4
+  // === FENSTERSCHEIBE (unter Rollladen, OPAK ===
+  const glass = makeBox(winW * 0.92, winH * 0.62, thickness * 0.4, C.l6_glass, {
+    roughness: 0.15, metalness: 0.5
   });
-  glass.position.set(winX, winY - winH * 0.18, -thickness * 0.15);
+  glass.position.set(winX, winY - winH * 0.18, -thickness * 0.3);
   g.add(glass);
 
-  // Lüfter oben rechts
-  const ventX = 2.0, ventY = 0.7;
-  const vBox = makeBox(0.4, 0.32, thickness * 1.1, C.l6_lamelle);
-  vBox.position.set(ventX, ventY, 0);
-  g.add(vBox);
-  for (let i = 0; i < 3; i++) {
-    const lam = makeBox(0.36, 0.04, thickness * 0.3, C.l6_rolladen);
-    lam.position.set(ventX, ventY + 0.10 - i * 0.08, thickness * 0.6);
+  // === LÜFTUNGSBLENDE (Hauptfläche mit Lamellen-Optik) ===
+  const ventBoxDepth = thickness * 1.0;
+  const ventBox = makeBox(ventW, ventH, ventBoxDepth, C.l6_lamelle);
+  ventBox.position.set(ventX, ventY, 0);
+  g.add(ventBox);
+  // Horizontale Lamellen auf der Vorderseite
+  for (let i = 0; i < 4; i++) {
+    const lamH = 0.025;
+    const lamY = ventY + ventH/2 - 0.04 - i * (ventH * 0.18);
+    const lam = makeBox(ventW * 0.88, lamH, thickness * 0.2, C.l6_rolladen);
+    lam.position.set(ventX, lamY, thickness * 0.55);
     g.add(lam);
   }
+
+  // === LÜFTUNGSSCHACHT (ragt aus der Wand heraus, kleines Vordach-Element) ===
+  const schachtW = 0.36, schachtH = 0.08, schachtD = thickness * 0.4;
+  const schacht = makeBox(schachtW, schachtH, schachtD, C.l6_dark);
+  schacht.position.set(ventX, ventY + ventH/2 + schachtH/2, thickness * 0.7);
+  g.add(schacht);
 
   return g;
 }
@@ -556,56 +758,24 @@ canvasWrap.appendChild(renderer.domElement);
 const lightsGroup = new THREE.Group();
 scene.add(lightsGroup);
 
-// LIGHTING PRESETS - im 3D-Modus zum Vergleichen
-let lightPreset = 'bright-flat'; // 'subtle' | 'bright-flat' | 'dramatic' | 'studio'
-
 function setupLights() {
   while (lightsGroup.children.length) lightsGroup.remove(lightsGroup.children[0]);
   if (lookMode === 'iso') return;
 
-  if (lightPreset === 'subtle') {
-    // Original (eher dunkel, mehr Schatten)
-    lightsGroup.add(new THREE.AmbientLight(0xffffff, 0.5));
-    const key = new THREE.DirectionalLight(0xffffff, 0.85);
-    key.position.set(5, 8, 6);
-    lightsGroup.add(key);
-    const fill = new THREE.DirectionalLight(0x88ccaa, 0.3);
-    fill.position.set(-5, 2, -4);
-    lightsGroup.add(fill);
-  }
-  else if (lightPreset === 'bright-flat') {
-    // Helle, brand-treue Variante: viel Ambient, sanftes Key-Light, kaum Schatten
-    lightsGroup.add(new THREE.AmbientLight(0xffffff, 1.1));
-    const key = new THREE.DirectionalLight(0xffffff, 0.5);
-    key.position.set(5, 8, 6);
-    lightsGroup.add(key);
-    const fill = new THREE.DirectionalLight(0xaaeecc, 0.3);
-    fill.position.set(-5, 4, -3);
-    lightsGroup.add(fill);
-  }
-  else if (lightPreset === 'dramatic') {
-    // Mehr Kontrast, klarere Schatten, kühlerer Look
-    lightsGroup.add(new THREE.AmbientLight(0x6080a0, 0.3));
-    const key = new THREE.DirectionalLight(0xffffff, 1.4);
-    key.position.set(6, 10, 5);
-    lightsGroup.add(key);
-    const rim = new THREE.DirectionalLight(0x5eff9c, 0.5);
-    rim.position.set(-3, 1, -5);
-    lightsGroup.add(rim);
-  }
-  else if (lightPreset === 'studio') {
-    // Studio-Setup: gleichmäßig hell von 3 Seiten, kaum Schatten, alle Farben strahlen
-    lightsGroup.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const front = new THREE.DirectionalLight(0xffffff, 0.7);
-    front.position.set(0, 2, 10);
-    lightsGroup.add(front);
-    const topL = new THREE.DirectionalLight(0xffffff, 0.6);
-    topL.position.set(3, 10, 3);
-    lightsGroup.add(topL);
-    const bottom = new THREE.DirectionalLight(0xaaeecc, 0.25);
-    bottom.position.set(-3, -2, 4);
-    lightsGroup.add(bottom);
-  }
+  // Studio-Setup (heller): gleichmäßig hell von mehreren Seiten, kaum Schatten
+  lightsGroup.add(new THREE.AmbientLight(0xffffff, 0.85));
+  const front = new THREE.DirectionalLight(0xffffff, 0.85);
+  front.position.set(0, 2, 10);
+  lightsGroup.add(front);
+  const topL = new THREE.DirectionalLight(0xffffff, 0.75);
+  topL.position.set(3, 10, 3);
+  lightsGroup.add(topL);
+  const sideL = new THREE.DirectionalLight(0xffffff, 0.5);
+  sideL.position.set(8, 3, 5);
+  lightsGroup.add(sideL);
+  const bottom = new THREE.DirectionalLight(0xaaeecc, 0.35);
+  bottom.position.set(-3, -2, 4);
+  lightsGroup.add(bottom);
 }
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -833,17 +1003,12 @@ function setLookMode(mode) {
   document.getElementById('look-iso').classList.toggle('active', mode === 'iso');
   document.getElementById('look-real').classList.toggle('active', mode === 'real');
 
-  // Light-Preset Picker nur im 3D-Modus zeigen
-  document.getElementById('light-presets').classList.toggle('visible', mode === 'real');
-
   if (mode === 'iso') {
-    // iso: weit weg, kleine FOV → quasi-orthographisch
     camera.fov = 22;
-    camera.position.set(20, 13, 22);
+    camera.position.set(24, 14, 26);
   } else {
-    // 3D: weiter weg als vorher damit alle 6 Layer im Frame sind
     camera.fov = 38;
-    camera.position.set(11, 6, 15);
+    camera.position.set(13, 7, 17);
   }
   camera.updateProjectionMatrix();
   controls.target.set(0, 0, 0);
@@ -856,16 +1021,6 @@ function setLookMode(mode) {
 document.getElementById('look-iso').addEventListener('click', () => setLookMode('iso'));
 document.getElementById('look-real').addEventListener('click', () => setLookMode('real'));
 
-// Light-Preset Buttons
-document.querySelectorAll('#light-presets button[data-preset]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    lightPreset = btn.dataset.preset;
-    document.querySelectorAll('#light-presets button').forEach(b =>
-      b.classList.toggle('active', b === btn));
-    setupLights();
-  });
-});
-
 setLookMode('iso');
 
 // ============================================================
@@ -873,8 +1028,8 @@ setLookMode('iso');
 // ============================================================
 document.getElementById('btn-expand').addEventListener('click', () => animateToState(!isExpanded));
 document.getElementById('btn-reset').addEventListener('click', () => {
-  if (lookMode === 'iso') camera.position.set(20, 13, 22);
-  else camera.position.set(11, 6, 15);
+  if (lookMode === 'iso') camera.position.set(24, 14, 26);
+  else camera.position.set(13, 7, 17);
   controls.target.set(0, 0, 0);
   controls.update();
 });
