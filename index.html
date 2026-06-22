@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ecoskin Stage 3 - Details</title>
+<style>
+  :root {
+    --bg: rgb(0, 46, 54);
+    --text: #ffffff;
+    --text-secondary: rgb(128, 150, 154);
+    --accent: #5eff9c;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  #app {
+    width: 100vw; height: 100vh;
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    grid-template-rows: 1fr auto;
+  }
+  #canvas-wrap {
+    position: relative;
+    grid-column: 1 / 2; grid-row: 1 / 2;
+    overflow: hidden;
+  }
+  canvas { display: block; }
+  canvas.hovering { cursor: pointer; }
+
+  #info-panel {
+    grid-column: 2 / 3; grid-row: 1 / 3;
+    padding: 32px 28px;
+    border-left: 1px solid rgba(128, 150, 154, 0.2);
+    display: flex; flex-direction: column; gap: 16px;
+    overflow-y: auto;
+  }
+  .eyebrow {
+    color: var(--accent); font-size: 12px;
+    font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  #info-panel h2 { margin: 0; font-size: 22px; line-height: 1.25; }
+  #info-panel p { margin: 0; color: var(--text-secondary); font-size: 15px; line-height: 1.5; }
+  #info-extras { display: flex; flex-direction: column; gap: 16px; margin-top: 8px; }
+  #info-extras .extra-item { display: flex; flex-direction: column; gap: 16px; }
+  #info-extras h3 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1.25; color: var(--text); }
+  #info-extras p { margin: 0; color: var(--text-secondary); font-size: 15px; line-height: 1.5; }
+
+  #controls {
+    grid-column: 1 / 2; grid-row: 2 / 3;
+    padding: 16px 24px 24px;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  button.action {
+    background: var(--accent); color: var(--bg);
+    border: none; padding: 12px 22px;
+    font-size: 15px; font-weight: 600;
+    border-radius: 999px; cursor: pointer;
+    transition: opacity 150ms;
+  }
+  button.action:hover { opacity: 0.85; }
+  button.ghost {
+    background: transparent; color: var(--text);
+    border: 1px solid rgba(128, 150, 154, 0.4);
+    padding: 12px 18px; font-size: 14px;
+    border-radius: 999px; cursor: pointer;
+  }
+  button.ghost:hover { border-color: var(--accent); }
+
+  #look-toggle {
+    position: absolute; top: 20px; right: 20px; z-index: 10;
+    display: flex;
+    background: rgba(0, 46, 54, 0.7);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(128, 150, 154, 0.3);
+    border-radius: 999px; padding: 4px;
+  }
+  #look-toggle button {
+    background: transparent; color: var(--text-secondary);
+    border: none; padding: 8px 16px;
+    font-size: 13px; border-radius: 999px;
+    cursor: pointer; transition: all 150ms;
+  }
+  #look-toggle button.active {
+    background: var(--accent); color: var(--bg); font-weight: 600;
+  }
+
+  /* Lighting Preset Selector — nur im 3D-Modus */
+  #light-presets {
+    position: absolute; top: 70px; right: 20px; z-index: 10;
+    display: none; /* nur sichtbar im 3D-Modus */
+    flex-direction: column; gap: 4px;
+    background: rgba(0, 46, 54, 0.7);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(128, 150, 154, 0.3);
+    border-radius: 12px; padding: 8px;
+    min-width: 140px;
+  }
+  #light-presets.visible { display: flex; }
+  #light-presets .label {
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 4px 8px 2px;
+  }
+  #light-presets button {
+    background: transparent; color: var(--text);
+    border: none; padding: 6px 12px;
+    font-size: 12px; text-align: left;
+    border-radius: 6px; cursor: pointer;
+    transition: background 100ms;
+  }
+  #light-presets button:hover { background: rgba(255,255,255,0.08); }
+  #light-presets button.active {
+    background: var(--accent); color: var(--bg); font-weight: 600;
+  }
+
+  .hint { color: var(--text-secondary); font-size: 13px; margin-left: auto; }
+
+  @media (max-width: 800px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: 1fr auto auto; }
+    #canvas-wrap { grid-column: 1; grid-row: 1; }
+    #controls    { grid-column: 1; grid-row: 2; padding: 12px 16px; }
+    #info-panel  {
+      grid-column: 1; grid-row: 3;
+      border-left: none;
+      border-top: 1px solid rgba(128, 150, 154, 0.2);
+      padding: 20px 16px 24px; max-height: 40vh;
+    }
+    .hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="canvas-wrap">
+    <div id="look-toggle">
+      <button id="look-iso" class="active">Isometrisch</button>
+      <button id="look-real">3D-Look</button>
+    </div>
+    <div id="light-presets">
+      <span class="label">Beleuchtung</span>
+      <button data-preset="subtle">Subtle</button>
+      <button data-preset="bright-flat" class="active">Bright Flat</button>
+      <button data-preset="dramatic">Dramatic</button>
+      <button data-preset="studio">Studio</button>
+    </div>
+  </div>
+  <div id="controls">
+    <button id="btn-expand" class="action">Aufbau zeigen</button>
+    <button id="btn-reset"  class="ghost">Ansicht zurücksetzen</button>
+    <span class="hint">Ziehen zum Drehen · Scroll zum Zoomen</span>
+  </div>
+  <aside id="info-panel">
+    <div class="eyebrow">Fassadenaufbau</div>
+    <h2 id="info-title">ecoskin – Schichtaufbau</h2>
+    <p id="info-text">Klicken Sie auf <span style="color: var(--accent);">"Aufbau zeigen"</span>, um die einzelnen Schichten zu erkunden.</p>
+    <div id="info-extras"></div>
+  </aside>
+</div>
+
+<!-- Three.js + OrbitControls via jsdelivr (korrekter MIME-Type) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+(function() {
+// ============================================================
+//  TEXTS
+// ============================================================
+const LAYER_TEXTS = [
+  { title: 'Ausgleichsdämmung',           text: 'Mineralwolle zur Wärmedämmung und zum Toleranzausgleich. Stellt eine lückenlose Verbindung zur Bestandswand her.' },
+  { title: 'Beplankung',                  text: 'Robuste Gipsfaserplatte zur statischen Aussteifung. Dient als Barriere für Brand- und Schallschutz.' },
+  { title: 'Holzrahmen + Gefachdämmung',  text: 'Tragwerk aus Holzständern, Schwelle und Rähm. Gefach mit Mineralwolle gefüllt.' },
+  { title: 'Fassadenbahn',                text: 'Wetterfeste, diffusionsoffene Membran. Sorgt für Winddichtigkeit.' },
+  { title: 'Hinterlüftung',               text: 'Tragsystem mit Hohlraum für Luftzirkulation, Feuchtigkeitsabfuhr und Hitzeschutz.' },
+  {
+    title: 'Fassadenbekleidung',
+    text: 'Schützt vor Witterung und bestimmt das architektonische Erscheinungsbild. Konfigurierbar aus Faserzement oder Holz.',
+    extras: [
+      { title: 'Fenster', text: 'Werksseitig im Fassadenmodul integrierte Fenstereinheiten. Optional und je nach Bedarf mit integriertem Sonnenschutz.' },
+      { title: 'Lüfter',  text: 'Kompakte Einheit für automatischen Luftaustausch und Feuchteregulierung. Spart durch hocheffiziente Wärmerückgewinnung zusätzlich Heizenergie.' }
+    ]
+  }
+];
+
+// ============================================================
+//  COLORS aus SVGs
+// ============================================================
+const C = {
+  bg:         0x002e36,
+  edge:       0x002e36,
+  // Layer 1
+  l1:         0xd9eddf,
+  // Layer 2
+  l2:         0x4d787a,
+  // Layer 3
+  l3_fill:    0xdeecdf,
+  l3_frame:   0xadc4c6,
+  // Layer 4
+  l4:         0x64989a,
+  // Layer 5
+  l5:         0x3e797b,
+  // Layer 6
+  l6_main:    0x5dff9c,
+  l6_dark:    0x4d787a,
+  l6_rolladen:0x1b4950,
+  l6_glass:   0xf4f4f4,
+  l6_lamelle: 0x4d787a
+};
+
+const LAYER_W = 5.5;
+const LAYER_H = 2.0;
+const LAYER_DEFS = [
+  { thickness: 0.18, builder: 'mineralwolle' },
+  { thickness: 0.08, builder: 'beplankung' },
+  { thickness: 0.45, builder: 'holzrahmen' },
+  { thickness: 0.02, builder: 'membran' },
+  { thickness: 0.16, builder: 'hinterlueftung' },
+  { thickness: 0.12, builder: 'bekleidung' }
+];
+
+const COLLAPSED_GAP = 0;
+const EXPANDED_GAP  = 1.3;
+
+// ============================================================
+//  LOOK MODE - bestimmt Material-Typ
+// ============================================================
+let lookMode = 'iso';
+
+function mat(color, opts = {}) {
+  if (lookMode === 'iso') {
+    return new THREE.MeshBasicMaterial({
+      color,
+      transparent: opts.opacity != null && opts.opacity < 1,
+      opacity: opts.opacity ?? 1
+    });
+  } else {
+    return new THREE.MeshStandardMaterial({
+      color,
+      roughness: opts.roughness ?? 0.7,
+      metalness: opts.metalness ?? 0.05,
+      transparent: opts.opacity != null && opts.opacity < 1,
+      opacity: opts.opacity ?? 1,
+      map: opts.map || null
+    });
+  }
+}
+
+// Prozedurale Holz-Textur (UV Plus-artiges warmes Naturholz)
+let cachedWoodTexture = null;
+function getWoodTexture() {
+  if (cachedWoodTexture) return cachedWoodTexture;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+
+  // Warmer Holz-Grundton
+  const baseR = 178, baseG = 124, baseB = 70;
+
+  // Hintergrund: vertikaler Gradient von leicht heller (oben) zu leicht dunkler (unten)
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, `rgb(${baseR + 12}, ${baseG + 8}, ${baseB + 5})`);
+  grad.addColorStop(1, `rgb(${baseR - 15}, ${baseG - 10}, ${baseB - 8})`);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Maserung: feine horizontale Linien mit Variation (entspricht Holzfaser in vertikaler Schalungsrichtung)
+  // Hinweis: Auf der Bekleidung sind die Lamellen horizontal, also auch die Maserung horizontal.
+  let seed = 42;
+  function rnd() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+
+  for (let i = 0; i < 220; i++) {
+    const y = rnd() * canvas.height;
+    const len = canvas.width * (0.4 + rnd() * 0.6);
+    const x0 = rnd() * (canvas.width - len);
+    const darkness = 0.10 + rnd() * 0.20;
+    ctx.strokeStyle = `rgba(80, 50, 25, ${darkness})`;
+    ctx.lineWidth = 0.4 + rnd() * 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    // Leicht wellige Linie für natürliche Wirkung
+    const steps = 6;
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
+      const x = x0 + len * t;
+      const wobble = (rnd() - 0.5) * 3;
+      ctx.lineTo(x, y + wobble);
+    }
+    ctx.stroke();
+  }
+
+  // Helle Glanz-Lichter (subtle highlights)
+  for (let i = 0; i < 60; i++) {
+    const y = rnd() * canvas.height;
+    const len = canvas.width * (0.2 + rnd() * 0.4);
+    const x0 = rnd() * (canvas.width - len);
+    ctx.strokeStyle = `rgba(230, 190, 140, ${0.06 + rnd() * 0.08})`;
+    ctx.lineWidth = 0.6 + rnd() * 1.0;
+    ctx.beginPath();
+    ctx.moveTo(x0, y);
+    ctx.lineTo(x0 + len, y);
+    ctx.stroke();
+  }
+
+  // Vereinzelte Knoten / dunklere Punkte
+  for (let i = 0; i < 5; i++) {
+    const x = rnd() * canvas.width;
+    const y = rnd() * canvas.height;
+    const r = 3 + rnd() * 6;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(60, 35, 18, 0.55)');
+    g.addColorStop(1, 'rgba(60, 35, 18, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1.5, 0.8);
+  if (THREE.SRGBColorSpace !== undefined) {
+    tex.colorSpace = THREE.SRGBColorSpace; // Three.js 0.152+
+  } else if (THREE.sRGBEncoding !== undefined) {
+    tex.encoding = THREE.sRGBEncoding; // Three.js < 0.152
+  }
+  cachedWoodTexture = tex;
+  return tex;
+}
+
+function makeBox(w, h, d, color, opts = {}) {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const mesh = new THREE.Mesh(geo, mat(color, opts));
+  // Edges nur im iso-Modus deutlich sichtbar
+  const edgeOpts = lookMode === 'iso'
+    ? { color: C.edge, opacity: 1 }
+    : { color: 0x000000, opacity: 0.15, transparent: true };
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial(edgeOpts)
+  );
+  mesh.add(edges);
+  return mesh;
+}
+
+// ============================================================
+//  LAYER BUILDERS
+// ============================================================
+
+function buildMineralwolle(thickness) {
+  return makeBox(LAYER_W, LAYER_H, thickness, C.l1);
+}
+
+function buildBeplankung(thickness) {
+  return makeBox(LAYER_W, LAYER_H, thickness, C.l2);
+}
+
+function buildHolzrahmen(thickness) {
+  const g = new THREE.Group();
+  // Mineralwolle-Füllung (etwas kleiner als Gesamtbox)
+  const fill = makeBox(LAYER_W * 0.98, LAYER_H * 0.98, thickness * 0.92, C.l3_fill);
+  g.add(fill);
+
+  // Holzrahmen: außen umlaufender Rahmen + 3 Ständer mittig
+  const frameThick = 0.10;
+  // Oben
+  const top = makeBox(LAYER_W, frameThick, thickness * 1.0, C.l3_frame);
+  top.position.y = LAYER_H/2 - frameThick/2;
+  g.add(top);
+  // Unten
+  const bot = makeBox(LAYER_W, frameThick, thickness * 1.0, C.l3_frame);
+  bot.position.y = -LAYER_H/2 + frameThick/2;
+  g.add(bot);
+  // Links
+  const left = makeBox(frameThick, LAYER_H, thickness * 1.0, C.l3_frame);
+  left.position.x = -LAYER_W/2 + frameThick/2;
+  g.add(left);
+  // Rechts
+  const right = makeBox(frameThick, LAYER_H, thickness * 1.0, C.l3_frame);
+  right.position.x = LAYER_W/2 - frameThick/2;
+  g.add(right);
+  // 3 vertikale Ständer
+  for (let i = 1; i <= 3; i++) {
+    const stud = makeBox(frameThick, LAYER_H - frameThick*2, thickness * 1.0, C.l3_frame);
+    stud.position.x = -LAYER_W/2 + (LAYER_W / 4) * i;
+    g.add(stud);
+  }
+  return g;
+}
+
+function buildMembran(thickness) {
+  // Membran: dünn, im 3D-Modus leicht transparent
+  const opacity = lookMode === 'real' ? 0.85 : 1.0;
+  return makeBox(LAYER_W, LAYER_H, thickness, C.l4, { opacity });
+}
+
+function buildHinterlueftung(thickness) {
+  const g = new THREE.Group();
+  // Vertikale Latten
+  const lathCount = 6;
+  const lathW = 0.10;
+  for (let i = 0; i < lathCount; i++) {
+    const tFrac = i / (lathCount - 1);
+    const x = -LAYER_W/2 + 0.15 + tFrac * (LAYER_W - 0.3);
+    const lath = makeBox(lathW, LAYER_H * 0.95, thickness, C.l5);
+    lath.position.set(x, 0, 0);
+    g.add(lath);
+  }
+  return g;
+}
+
+function buildBekleidung(thickness) {
+  const g = new THREE.Group();
+
+  // Fenster-Geometrie
+  const winW = 1.0, winH = 1.1;
+  const winX = 1.3, winY = -0.05;
+  const winLeft = winX - winW/2, winRight = winX + winW/2;
+  const winTop = winY + winH/2, winBot = winY - winH/2;
+
+  // Material für Lamellen: im 3D-Modus mit Holz-Textur, im iso-Modus mit Brand-Grün
+  let claddingColor, claddingMap;
+  if (lookMode === 'real') {
+    claddingColor = 0xffffff; // weiß, damit die Textur ihre echten Farben zeigt
+    claddingMap = getWoodTexture();
+  } else {
+    claddingColor = C.l6_main; // Brand-Grün im iso-Modus
+    claddingMap = null;
+  }
+
+  function makeCladdingBox(w, h, d, pos) {
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const material = mat(claddingColor, { map: claddingMap, roughness: 0.85, metalness: 0 });
+    const mesh = new THREE.Mesh(geo, material);
+    mesh.position.copy(pos);
+    // Edges
+    const edgeOpts = lookMode === 'iso'
+      ? { color: C.edge, opacity: 1 }
+      : { color: 0x000000, opacity: 0.15, transparent: true };
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geo),
+      new THREE.LineBasicMaterial(edgeOpts)
+    );
+    mesh.add(edges);
+    return mesh;
+  }
+
+  // Holzlamellen-Look: horizontale Streifen, mit Fenster-Aussparung
+  const stripeCount = 12;
+  const stripeH = LAYER_H / stripeCount;
+  for (let i = 0; i < stripeCount; i++) {
+    const sY = -LAYER_H/2 + stripeH/2 + i * stripeH;
+    const sTop = sY + stripeH/2, sBot = sY - stripeH/2;
+    const cutByWindow = sTop > winBot && sBot < winTop;
+    if (!cutByWindow) {
+      g.add(makeCladdingBox(LAYER_W, stripeH * 0.96, thickness, new THREE.Vector3(0, sY, 0)));
+    } else {
+      const leftW = winLeft - (-LAYER_W/2);
+      if (leftW > 0.02) {
+        g.add(makeCladdingBox(leftW, stripeH * 0.96, thickness, new THREE.Vector3(-LAYER_W/2 + leftW/2, sY, 0)));
+      }
+      const rightW = LAYER_W/2 - winRight;
+      if (rightW > 0.02) {
+        g.add(makeCladdingBox(rightW, stripeH * 0.96, thickness, new THREE.Vector3(LAYER_W/2 - rightW/2, sY, 0)));
+      }
+    }
+  }
+
+  // Fensterleibung (4 dunkle Bänder um das Fenster)
+  const lt = 0.05;
+  const lTop = makeBox(winW + lt*2, lt, thickness * 0.95, C.l6_dark);
+  lTop.position.set(winX, winTop + lt/2, -0.005);
+  g.add(lTop);
+  const lBot = makeBox(winW + lt*2, lt * 1.4, thickness * 0.95, C.l6_dark);
+  lBot.position.set(winX, winBot - lt*0.7, -0.005);
+  g.add(lBot);
+  const lLeft = makeBox(lt, winH, thickness * 0.95, C.l6_dark);
+  lLeft.position.set(winLeft - lt/2, winY, -0.005);
+  g.add(lLeft);
+  const lRight = makeBox(lt, winH, thickness * 0.95, C.l6_dark);
+  lRight.position.set(winRight + lt/2, winY, -0.005);
+  g.add(lRight);
+
+  // Rollladen oben (4 Streifen)
+  const rH = winH * 0.32;
+  const rY = winY + winH/2 - rH/2;
+  for (let i = 0; i < 4; i++) {
+    const sh = rH / 4;
+    const sy = rY + rH/2 - sh/2 - i * sh;
+    const stripe = makeBox(winW * 0.92, sh * 0.85, thickness * 0.35, C.l6_rolladen);
+    stripe.position.set(winX, sy, thickness * 0.1);
+    g.add(stripe);
+  }
+
+  // Fensterscheibe (unter Rollladen)
+  const glassOpacity = lookMode === 'real' ? 0.55 : 1.0;
+  const glass = makeBox(winW * 0.92, winH * 0.6, thickness * 0.3, C.l6_glass, {
+    opacity: glassOpacity, roughness: 0.1, metalness: 0.4
+  });
+  glass.position.set(winX, winY - winH * 0.18, -thickness * 0.15);
+  g.add(glass);
+
+  // Lüfter oben rechts
+  const ventX = 2.0, ventY = 0.7;
+  const vBox = makeBox(0.4, 0.32, thickness * 1.1, C.l6_lamelle);
+  vBox.position.set(ventX, ventY, 0);
+  g.add(vBox);
+  for (let i = 0; i < 3; i++) {
+    const lam = makeBox(0.36, 0.04, thickness * 0.3, C.l6_rolladen);
+    lam.position.set(ventX, ventY + 0.10 - i * 0.08, thickness * 0.6);
+    g.add(lam);
+  }
+
+  return g;
+}
+
+const BUILDERS = {
+  mineralwolle:  buildMineralwolle,
+  beplankung:    buildBeplankung,
+  holzrahmen:    buildHolzrahmen,
+  membran:       buildMembran,
+  hinterlueftung:buildHinterlueftung,
+  bekleidung:    buildBekleidung
+};
+
+// ============================================================
+//  SCENE
+// ============================================================
+const canvasWrap = document.getElementById('canvas-wrap');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(C.bg);
+
+const camera = new THREE.PerspectiveCamera(40, canvasWrap.clientWidth / canvasWrap.clientHeight, 0.1, 200);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(canvasWrap.clientWidth, canvasWrap.clientHeight);
+canvasWrap.appendChild(renderer.domElement);
+
+// Lichter (werden in iso-Modus nicht genutzt, da MeshBasicMaterial)
+const lightsGroup = new THREE.Group();
+scene.add(lightsGroup);
+
+// LIGHTING PRESETS - im 3D-Modus zum Vergleichen
+let lightPreset = 'bright-flat'; // 'subtle' | 'bright-flat' | 'dramatic' | 'studio'
+
+function setupLights() {
+  while (lightsGroup.children.length) lightsGroup.remove(lightsGroup.children[0]);
+  if (lookMode === 'iso') return;
+
+  if (lightPreset === 'subtle') {
+    // Original (eher dunkel, mehr Schatten)
+    lightsGroup.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const key = new THREE.DirectionalLight(0xffffff, 0.85);
+    key.position.set(5, 8, 6);
+    lightsGroup.add(key);
+    const fill = new THREE.DirectionalLight(0x88ccaa, 0.3);
+    fill.position.set(-5, 2, -4);
+    lightsGroup.add(fill);
+  }
+  else if (lightPreset === 'bright-flat') {
+    // Helle, brand-treue Variante: viel Ambient, sanftes Key-Light, kaum Schatten
+    lightsGroup.add(new THREE.AmbientLight(0xffffff, 1.1));
+    const key = new THREE.DirectionalLight(0xffffff, 0.5);
+    key.position.set(5, 8, 6);
+    lightsGroup.add(key);
+    const fill = new THREE.DirectionalLight(0xaaeecc, 0.3);
+    fill.position.set(-5, 4, -3);
+    lightsGroup.add(fill);
+  }
+  else if (lightPreset === 'dramatic') {
+    // Mehr Kontrast, klarere Schatten, kühlerer Look
+    lightsGroup.add(new THREE.AmbientLight(0x6080a0, 0.3));
+    const key = new THREE.DirectionalLight(0xffffff, 1.4);
+    key.position.set(6, 10, 5);
+    lightsGroup.add(key);
+    const rim = new THREE.DirectionalLight(0x5eff9c, 0.5);
+    rim.position.set(-3, 1, -5);
+    lightsGroup.add(rim);
+  }
+  else if (lightPreset === 'studio') {
+    // Studio-Setup: gleichmäßig hell von 3 Seiten, kaum Schatten, alle Farben strahlen
+    lightsGroup.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const front = new THREE.DirectionalLight(0xffffff, 0.7);
+    front.position.set(0, 2, 10);
+    lightsGroup.add(front);
+    const topL = new THREE.DirectionalLight(0xffffff, 0.6);
+    topL.position.set(3, 10, 3);
+    lightsGroup.add(topL);
+    const bottom = new THREE.DirectionalLight(0xaaeecc, 0.25);
+    bottom.position.set(-3, -2, 4);
+    lightsGroup.add(bottom);
+  }
+}
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 4;
+controls.maxDistance = 60;
+
+// ============================================================
+//  BUILD SCENE
+// ============================================================
+let layerGroups = [];
+let isExpanded = false;
+let hoveredLayerIndex = -1;
+const hitBoxes = []; // unsichtbare Boxen pro Layer, nur für Raycasting
+
+function computePositions(expanded) {
+  const positions = [];
+  if (expanded) {
+    const total = EXPANDED_GAP * (LAYER_DEFS.length - 1);
+    for (let i = 0; i < LAYER_DEFS.length; i++) positions.push(-total/2 + i * EXPANDED_GAP);
+  } else {
+    const thicknesses = LAYER_DEFS.map(l => l.thickness);
+    const total = thicknesses.reduce((a, b) => a + b, 0);
+    let cursor = -total/2;
+    for (let i = 0; i < LAYER_DEFS.length; i++) {
+      positions.push(cursor + thicknesses[i]/2);
+      cursor += thicknesses[i];
+    }
+  }
+  return positions;
+}
+
+function buildScene() {
+  // Alte Layer entfernen
+  layerGroups.forEach(g => scene.remove(g));
+  layerGroups = [];
+  hitBoxes.length = 0;
+
+  const positions = computePositions(isExpanded);
+  LAYER_DEFS.forEach((def, i) => {
+    const wrapper = new THREE.Group();
+    const built = BUILDERS[def.builder](def.thickness);
+    wrapper.add(built);
+
+    // Unsichtbare Hit-Box: füllt die volle Layer-Box, dient nur dem Raycasting
+    // Damit auch Layer mit Lücken (Hinterlüftung, Holzrahmen) als ganzes hover-bar sind.
+    const hitGeo = new THREE.BoxGeometry(LAYER_W, LAYER_H, def.thickness);
+    const hitMat = new THREE.MeshBasicMaterial({
+      visible: false,  // unsichtbar, aber für Raycast trefffähig
+      side: THREE.DoubleSide
+    });
+    const hitBox = new THREE.Mesh(hitGeo, hitMat);
+    hitBox.userData.layerIndex = i;
+    hitBox.userData.isHitBox = true;
+    wrapper.add(hitBox);
+    hitBoxes.push(hitBox);
+
+    wrapper.position.z = positions[i];
+    wrapper.userData.layerIndex = i;
+    scene.add(wrapper);
+    layerGroups.push(wrapper);
+  });
+
+  // Hover-State zurücksetzen (Materialien wurden neu erstellt)
+  hoveredLayerIndex = -1;
+  renderer.domElement?.classList.remove('hovering');
+}
+buildScene();
+
+// ============================================================
+//  EXPAND/COLLAPSE
+// ============================================================
+let isAnimating = false;
+function animateToState(expanded) {
+  if (isAnimating) return;
+  isAnimating = true;
+  const starts = layerGroups.map(g => g.position.z);
+  const targets = computePositions(expanded);
+  const t0 = performance.now();
+  const dur = 800;
+  function ease(t) { return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2; }
+  function tick(now) {
+    const k = ease(Math.min(1, (now - t0) / dur));
+    layerGroups.forEach((g, i) => g.position.z = starts[i] + (targets[i] - starts[i]) * k);
+    if (k < 1) requestAnimationFrame(tick);
+    else {
+      isAnimating = false;
+      isExpanded = expanded;
+      document.getElementById('btn-expand').textContent = expanded ? 'Zusammenfügen' : 'Aufbau zeigen';
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+// ============================================================
+//  CLICK auf Layer
+// ============================================================
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
+// Mausposition in normalized device coordinates (-1 bis +1) umrechnen.
+// Wir benutzen den canvas-Wrapper als Referenz, weil renderer.domElement
+// möglicherweise nicht exakt die Wrapper-Größe hat.
+function updatePointer(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  pointer.x = (x / rect.width) * 2 - 1;
+  pointer.y = -(y / rect.height) * 2 + 1;
+}
+
+function showInfo(layerIndex) {
+  const data = LAYER_TEXTS[layerIndex];
+  document.getElementById('info-title').textContent = data.title;
+  document.getElementById('info-text').textContent  = data.text;
+  const extrasEl = document.getElementById('info-extras');
+  extrasEl.innerHTML = '';
+  if (data.extras && data.extras.length) {
+    data.extras.forEach(ex => {
+      const item = document.createElement('div');
+      item.className = 'extra-item';
+      const h3 = document.createElement('h3');
+      h3.textContent = ex.title;
+      const p = document.createElement('p');
+      p.textContent = ex.text;
+      item.appendChild(h3);
+      item.appendChild(p);
+      extrasEl.appendChild(item);
+    });
+  }
+}
+
+renderer.domElement.addEventListener('click', (e) => {
+  if (!isExpanded) return;
+  updatePointer(e);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(hitBoxes, false);
+  if (hits.length > 0) {
+    showInfo(hits[0].object.userData.layerIndex);
+  }
+});
+
+// ============================================================
+//  HOVER-HIGHLIGHT
+// ============================================================
+// Setzt Highlight für eine Layer-Gruppe (oder alle aus mit index === -1)
+function applyHighlight(layerIndex) {
+  layerGroups.forEach((group, i) => {
+    const isHovered = i === layerIndex;
+    group.traverse(child => {
+      if (!child.isMesh || !child.material) return;
+      // Edge-Lines (LineSegments) überspringen
+      if (child.isLineSegments) return;
+      // Hit-Boxen überspringen (unsichtbar, nur für Raycasting)
+      if (child.userData.isHitBox) return;
+
+      const mat = child.material;
+      if (mat.isMeshStandardMaterial) {
+        // 3D-Modus: emissive für sanftes "Glow"
+        if (!mat.userData.originalEmissive) {
+          mat.userData.originalEmissive = mat.emissive.clone();
+        }
+        if (isHovered) {
+          mat.emissive.setHex(0xffffff);
+          mat.emissiveIntensity = 0.25;
+        } else {
+          mat.emissive.copy(mat.userData.originalEmissive);
+          mat.emissiveIntensity = 1;
+        }
+      } else if (mat.isMeshBasicMaterial) {
+        // iso-Modus: Farbe direkt aufhellen
+        if (!mat.userData.originalColor) {
+          mat.userData.originalColor = mat.color.clone();
+        }
+        if (isHovered) {
+          // Heller machen: mit Weiß mischen
+          mat.color.copy(mat.userData.originalColor).lerp(new THREE.Color(0xffffff), 0.35);
+        } else {
+          mat.color.copy(mat.userData.originalColor);
+        }
+      }
+    });
+  });
+}
+
+function clearHighlight() {
+  if (hoveredLayerIndex !== -1) {
+    applyHighlight(-1);
+    hoveredLayerIndex = -1;
+    renderer.domElement.classList.remove('hovering');
+  }
+}
+
+renderer.domElement.addEventListener('mousemove', (e) => {
+  if (!isExpanded) {
+    clearHighlight();
+    return;
+  }
+  updatePointer(e);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(hitBoxes, false);
+
+  let newIndex = -1;
+  if (hits.length > 0) {
+    newIndex = hits[0].object.userData.layerIndex;
+  }
+
+  if (newIndex !== hoveredLayerIndex) {
+    hoveredLayerIndex = newIndex;
+    applyHighlight(newIndex);
+    renderer.domElement.classList.toggle('hovering', newIndex !== -1);
+  }
+});
+
+renderer.domElement.addEventListener('mouseleave', clearHighlight);
+
+// ============================================================
+//  LOOK MODE
+// ============================================================
+function setLookMode(mode) {
+  lookMode = mode;
+  document.getElementById('look-iso').classList.toggle('active', mode === 'iso');
+  document.getElementById('look-real').classList.toggle('active', mode === 'real');
+
+  // Light-Preset Picker nur im 3D-Modus zeigen
+  document.getElementById('light-presets').classList.toggle('visible', mode === 'real');
+
+  if (mode === 'iso') {
+    // iso: weit weg, kleine FOV → quasi-orthographisch
+    camera.fov = 22;
+    camera.position.set(20, 13, 22);
+  } else {
+    // 3D: weiter weg als vorher damit alle 6 Layer im Frame sind
+    camera.fov = 38;
+    camera.position.set(11, 6, 15);
+  }
+  camera.updateProjectionMatrix();
+  controls.target.set(0, 0, 0);
+  controls.update();
+
+  setupLights();
+  buildScene();
+}
+
+document.getElementById('look-iso').addEventListener('click', () => setLookMode('iso'));
+document.getElementById('look-real').addEventListener('click', () => setLookMode('real'));
+
+// Light-Preset Buttons
+document.querySelectorAll('#light-presets button[data-preset]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    lightPreset = btn.dataset.preset;
+    document.querySelectorAll('#light-presets button').forEach(b =>
+      b.classList.toggle('active', b === btn));
+    setupLights();
+  });
+});
+
+setLookMode('iso');
+
+// ============================================================
+//  BUTTONS
+// ============================================================
+document.getElementById('btn-expand').addEventListener('click', () => animateToState(!isExpanded));
+document.getElementById('btn-reset').addEventListener('click', () => {
+  if (lookMode === 'iso') camera.position.set(20, 13, 22);
+  else camera.position.set(11, 6, 15);
+  controls.target.set(0, 0, 0);
+  controls.update();
+});
+
+// ============================================================
+//  RESIZE - sowohl Window-Resize als auch Layout-Änderungen
+// ============================================================
+function handleResize() {
+  const w = canvasWrap.clientWidth;
+  const h = canvasWrap.clientHeight;
+  if (w === 0 || h === 0) return;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h, true);
+}
+window.addEventListener('resize', handleResize);
+
+// ResizeObserver für den Wrapper, falls Layout-Änderungen (z.B. durch Mobile-Breakpoint)
+if (typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(handleResize).observe(canvasWrap);
+}
+
+// Initial nochmal sizing erzwingen
+handleResize();
+
+// ============================================================
+//  RENDER LOOP
+// ============================================================
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+})();
+</script>
+</body>
+</html>
